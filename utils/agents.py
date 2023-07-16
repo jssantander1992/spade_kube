@@ -5,7 +5,8 @@ from spade.agent import Agent
 from spade.behaviour import FSMBehaviour, State, PeriodicBehaviour
 from spade.message import Message
 
-from utils.kube_manager import set_replicas
+from utils.kube_manager import create_deployment, delete_deployment, update_deployment
+
 
 STATE_1 = "INIT"
 STATE_2 = "READ_DATA"
@@ -14,9 +15,12 @@ STATE_4 = "KUBE_ACTION"
 STATE_5 = "END"
 
 
-class kube_fsm(FSMBehaviour):
+class KubeFSM(FSMBehaviour):
+
+
     async def on_start(self):
         print(f"FSM starting at initial state {self.current_state}")
+
 
     async def on_end(self):
         print(f"FSM finished at state {self.current_state}")
@@ -25,30 +29,33 @@ class kube_fsm(FSMBehaviour):
 
 class State1(State):
     async def run(self):
+        print("-------------------------------------------------------")
         print("I'm at state one (initial state)")
+        resp = create_deployment(self.agent.app, self.agent.deployment)
+        print(f"[INFO] deployment `{resp.metadata.name}` created.")
+        print("-------------------------------------------------------")
         self.set_next_state(STATE_2)
 
 
 class State2(State):
-    def __init__(self):
-        self.data = ''
-
     async def run(self):
+        print("-------------------------------------------------------")
         print("RecvBehav running")
 
         msg = await self.receive(timeout=3)
 
         if msg:
             print("Message received with content: {}".format(msg.body))
-            self.data = msg.body
             self.set_next_state(STATE_3)
         else:
             print("Did not received any message after 10 seconds")
             self.set_next_state(STATE_2)
+        print("-------------------------------------------------------")
 
 
 class State3(State):
     async def run(self):
+        print("-------------------------------------------------------")
         print("I'm Making the desition")
         time.sleep(5)
         rand = random.randint(1, 100)
@@ -57,15 +64,15 @@ class State3(State):
             self.set_next_state(STATE_4)
         else:
             self.set_next_state(STATE_2)
+        print("-------------------------------------------------------")
 
 
 class State4(State):
     async def run(self):
-        print("acting on kube")
+        print("-------------------------------------------------------")
+        print("I'm acting on Kube")
 
-        rand = random.randint(1,10)
-
-        await set_replicas(rand)
+        rand = random.randint(1, 10)
 
         msg = Message(to=str(self.agent.jid))
         msg.body = "Action done"
@@ -77,16 +84,23 @@ class State4(State):
             self.set_next_state(STATE_5)
         else:
             self.set_next_state(STATE_2)
-
+        resp = update_deployment(self.agent.app, self.agent.deployment, replicas=5)
+        print("-------------------------------------------------------")
 
 class State5(State):
     async def run(self):
+        resp = delete_deployment(self.agent.app)
         print("FINISH")
 
 
 class FSMAgent(Agent):
+    app = None
+    deployment = None
+
     async def setup(self):
-        fsm = kube_fsm()
+        fsm = KubeFSM()
+        fsm.app = self.app
+        fsm.deployment = self.deployment
         fsm.add_state(name=STATE_1, state=State1(), initial=True)
         fsm.add_state(name=STATE_2, state=State2())
         fsm.add_state(name=STATE_3, state=State3())
