@@ -1,4 +1,6 @@
 import asyncio
+import json
+import time
 from asyncio import sleep
 
 from kubernetes import client, config
@@ -11,7 +13,8 @@ DEPLOYMENT_NAME = "nginx-deployment"
 
 
 def create_deployment_object(container_name="nginx", container_image="nginx:1.15.4",
-                             resource_limits=None, resource_requests=None, template_labels=None, api_version="apps/v1"):
+                             resource_limits=None, resource_requests=None, template_labels=None, api_version="apps/v1",
+                             replicas=1):
     """
     Creates a Kubernetes deployment object using the Kubernetes Python client.
 
@@ -21,6 +24,7 @@ def create_deployment_object(container_name="nginx", container_image="nginx:1.15
     :param resource_requests: The resource requests for the container. (Default: {"cpu": "100m", "memory": "200Mi"})
     :param template_labels: The labels for the deployment template. (Default: {"app": "nginx"})
     :param api_version: The API version to use for the deployment. (Default: "apps/v1")
+    :param replicas: The number of replicas to create. (Default: 1)
 
     :return: The created Kubernetes deployment object.
     """
@@ -51,7 +55,7 @@ def create_deployment_object(container_name="nginx", container_image="nginx:1.15
 
     # Create the specification of deployment
     spec = client.V1DeploymentSpec(
-        replicas=1, template=template, selector={
+        replicas=replicas, template=template, selector={
             "matchLabels":
                 template_labels})
 
@@ -64,6 +68,34 @@ def create_deployment_object(container_name="nginx", container_image="nginx:1.15
     )
 
     return deployment
+
+
+def pods_metrics():
+    # Load Kubernetes configuration from default location
+    config.load_kube_config()
+
+    # Create an instance of the Kubernetes API client
+
+    api_client = client.ApiClient()
+    custom_api = client.CustomObjectsApi(api_client)
+
+    resp = custom_api.list_cluster_custom_object("metrics.k8s.io", "v1beta1", "pods")
+
+    return resp["items"]
+
+
+def nodes_metrics():
+    # Load Kubernetes configuration from default location
+    config.load_kube_config()
+
+    # Create an instance of the Kubernetes API client
+
+    api_client = client.ApiClient()
+    custom_api = client.CustomObjectsApi(api_client)
+
+    resp = custom_api.list_cluster_custom_object("metrics.k8s.io", "v1beta1", "nodes")
+
+    return resp["items"]
 
 
 def create_deployment(api, deployment):
@@ -92,7 +124,7 @@ def update_deployment(api, deployment, **kwargs):
         resp = api.patch_namespaced_deployment(
             name=DEPLOYMENT_NAME, namespace="default", body=deployment
         )
-    return resp
+    return deployment
 
 
 def restart_deployment(api, deployment):
@@ -122,3 +154,57 @@ def delete_deployment(api):
         ),
     )
     return resp
+
+
+def test():
+    # Configs can be set in Configuration class directly or using helper
+    # utility. If no argument provided, the config will be loaded from
+    # default location.
+    config.load_kube_config()
+    apps_v1 = client.AppsV1Api()
+
+    deployment = create_deployment_object()
+
+    resp = create_deployment(apps_v1, deployment)
+    print("\n[INFO] deployment `nginx-deployment` created.\n")
+    print("%s\t%s\t\t\t%s\t%s" % ("NAMESPACE", "NAME", "REVISION", "IMAGE"))
+    print(
+        "%s\t\t%s\t%s\t\t%s\n"
+        % (
+            resp.metadata.namespace,
+            resp.metadata.name,
+            resp.metadata.generation,
+            resp.spec.template.spec.containers[0].image,
+        )
+    )
+    time.sleep(10)
+
+    resp = update_deployment(apps_v1, deployment, replicas=5)
+    print("\n[INFO] deployment's container image updated.\n")
+    print("%s\t%s\t\t\t%s\t%s" % ("NAMESPACE", "NAME", "REVISION", "IMAGE"))
+    print(
+        "%s\t\t%s\t%s\t\t%s\n"
+        % (
+            resp.metadata.namespace,
+            resp.metadata.name,
+            resp.metadata.generation,
+            resp.spec.template.spec.containers[0].image,
+        )
+    )
+
+    resp = restart_deployment(apps_v1, deployment)
+    print("\n[INFO] deployment `nginx-deployment` restarted.\n")
+    print("%s\t\t\t%s\t%s" % ("NAME", "REVISION", "RESTARTED-AT"))
+    print(
+        "%s\t%s\t\t%s\n"
+        % (
+            resp.metadata.name,
+            resp.metadata.generation,
+            resp.spec.template.metadata.annotations,
+        )
+    )
+
+    time.sleep(30)
+
+    resp = delete_deployment(apps_v1)
+    print("\n[INFO] deployment `nginx-deployment` deleted.")
